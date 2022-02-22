@@ -118,7 +118,8 @@ class ProductPricelist(models.Model):
 
             # if Public user try to access standard price from website sale, need to call price_compute.
             # TDE SURPRISE: product can actually be a template
-            price = product.price_compute('list_price')[product.id]
+            # price = product.price_compute('attr_price')[product.id]
+            price = 0.0
 
             price_uom = self.env['uom.uom'].browse([qty_uom_id])
             for rule in items:
@@ -144,17 +145,17 @@ class ProductPricelist(models.Model):
                         cat = cat.parent_id
                     if not cat:
                         continue
-
+                price_type = self.env['product.price.type'].search([('id', '=', rule.base)], limit=1)
                 if rule.base == '-1' and rule.base_pricelist_id:
                     price_tmp = rule.base_pricelist_id._compute_price_rule([(product, qty, partner)], date, uom_id)[product.id][0]  # TDE: 0 = price, 1 = rule
                     price = rule.base_pricelist_id.currency_id._convert(price_tmp, self.currency_id, self.env.user.company_id, date, round=False)
                 else:
                     # if base option is public price take sale price else cost price of product
                     # price_compute returns the price in the context UoM, i.e. qty_uom_id
-                    price_type = self.env['product.price.type'].search([('id', '=', rule.base)], limit=1)
                     price = product.price_compute(price_type.field)[product.id]
 
                 convert_to_price_uom = (lambda price: product.uom_id._compute_price(price, price_uom))
+
 
                 if price is not False:
                     if rule.compute_price == 'fixed':
@@ -182,11 +183,10 @@ class ProductPricelist(models.Model):
                     suitable_rule = rule
                 break
             # Final price conversion into pricelist currency
-            if rule.base != '-1':
-                price_type = self.env['product.price.type'].search([('id', '=', rule.base)], limit=1)
-                if suitable_rule and price_type.currency != self.currency_id and suitable_rule.compute_price != 'fixed' and\
-                        suitable_rule.base != '-1':
-                    price = product.currency_id._compute(price_type.currency, self.currency_id, price, round=False)
+            if suitable_rule and suitable_rule.currency_id != price_type.currency and suitable_rule.compute_price != 'fixed' and \
+                    suitable_rule.base != '-1':
+                price = product.currency_id._convert(price, suitable_rule.currency_id, self.env.user.company_id, date, round=False)
+
 
             results[product.id] = (price, suitable_rule and suitable_rule.id or False)
 
@@ -199,14 +199,15 @@ class ProductPriclelistItem(models.Model):
     
     
     def _compute_base(self):
-        res = [('-1', _('Other Pricelist'))]
+        res = [('-1', _('Other Pricelist')),
+               ('list_price', _('List Price'))]
 
 
         price_types = self.env['product.price.type'].search([('active','=',True)])
         for price_type in price_types:
             if not (price_type.id,price_type.name) in res:
                 res.append((str(price_type.id), price_type.name))
-            return res
+        return res
                 
 
     base = fields.Selection(selection = lambda self: self._compute_base())
